@@ -1,0 +1,410 @@
+#! /home/zeski/anaconda3/bin/python
+
+
+## 1. Importing and setting up notebook for project:
+
+from urllib.request import urlretrieve
+import webbrowser
+import pandas as pd
+from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot
+import plotly.plotly as py
+import plotly.graph_objs as go
+from plotly import tools
+from scipy.stats import shapiro
+import numpy as np
+import matplotlib.pyplot as plt
+import plotly 
+import os
+# requires version >= 1.9.0
+init_notebook_mode(connected=True) # run at the start of every notebook
+#importing all necessary modules
+os.chdir('/home/zeski/Documents/Data_Science/DataSets')
+#Changing my directory to download csv
+url= 'https://inventory.data.gov/dataset/ce23c458-9c25-4bcc-a7bd-0490641dec8e/resource/9665a448-6f2f-4872-99b9-bf12b5af84f4/download/userssharedsdfschoolimprovement2010grants.csv'
+#Passing the the url to the url variable for retrieval
+_=urlretrieve(url,'Schools.csv')
+#Using the url retrieval tool to pull the file off the web and create a csv named Schools.csv
+
+
+
+## 2. Exploring the structure of the data for analysis
+
+schooldfs= pd.read_csv('Schools.csv')
+#Reading the csv file fro the directory i placed it in.
+print('The columns for school dataframe')
+print(schooldfs.columns)
+#Looking at the columns for the DataFrame
+print('\nThe data structure for the school dataframe')
+print(schooldfs.info())
+#Examining the information for each of the columns.
+
+
+#I see that we have some missing values in columns above. I will have to examine the metadata at https://catalog.data.gov/dataset/school-improvement-2010-grants.
+
+
+
+## 3. Cleaning the Data
+
+schooldfs['2010/11/Award Amount']=schooldfs['2010/11/Award Amount'].str.replace('$', ' ').astype('float')
+# Reformatting the Award column because I want to perform analysis using this column. So therefore it needs be cast from an object type('string') to a float.
+schooldfs.columns=['School Name', 'City', 'State', 'District Name', 'Award Amount', 'Model Selected','Location']
+# I wanted to rename the award amount column to something a little more readable
+null=schooldfs[schooldfs['Award Amount'].isnull()]
+#Checking the Dataframe for null values.
+print('========================================\nLayout of the Dataframe before deleting the null values:\n')
+print(schooldfs.info())
+print('========================================\nSummary Statistics before deleting the null values:\n')
+print(schooldfs['Award Amount'].describe())
+print('========================================\nNumber of States before deleting the null values:\n')
+print(schooldfs.State.nunique())
+print('========================================')
+schooldfs.dropna(subset=['Award Amount'],inplace=True)
+print('Number of States After deleting the null values:\n')
+print(schooldfs.State.nunique())
+print('========================================\nThe layout of the Dataframe after the deletion of the null values:\n')
+print(schooldfs.info())
+print('\n=================================\nSummary statistics for the dataframe after deleting the null values:\n')
+print(schooldfs['Award Amount'].describe())
+
+
+
+## 4. Testing For Normality
+
+_=schooldfs['Award Amount'].plot.hist(bins=20)
+plt.show()
+print('\n===========================================')
+quartile75=671142
+mean=schooldfs['Award Amount'].mean()
+quartile25=162541
+difference75_mean=quartile75-mean
+print(difference75_mean)
+differencemean_25=mean-quartile25
+print(differencemean_25)
+print('The differences between the 75th quartile-mean, and the mean-25th quartile are roughly the same.\n===========================================\n')
+npAward=np.array(schooldfs['Award Amount'])
+#Converting the Award series to a numpy array and storing it in it's own variable. 
+#Setting the alpha level and runnning the test.
+alpha=0.05
+stat,p=shapiro(npAward)
+print('Statistics=%.3f, p=%.3f' %(stat, p))
+#Setting up the interpretation of the test.
+if p > alpha:
+    print('fail to reject null hypothesis\nData is normally distributed')
+else:
+    print('reject H0,\nData is likely not normally distributed')
+print('After examining all three tells of the normality test, it is safe to assume that the data found within the Award column is not normally distributed.Caution to the use of the statistic mean. The data is skewed to the left, meaning that the use of average is more representative to the lower values of the distribution. Were the distribution normally distributed, I would place more weight to the use of average. Because of failure of normal distribution, for the purpose of this project, I will only use the Sum to make comparisons and report on them.')
+
+
+
+
+## 5.  Grouping the Data and creating dataframes for plotting
+
+
+
+#### 5a. Grouping by District
+
+schooldfs['Nat_Award_Sum']=schooldfs['Award Amount'].sum()
+# Creating a column that contains the sum so it can be used for comparison later
+bydistrict= schooldfs.groupby(['State','District Name'])
+# As the first step in analysis, I am grouping the dataset by State and district to calculate the sum of award allocation for each district per state
+distsum=bydistrict['Award Amount'].agg('sum')
+#aggregating the groupby by sum for analysis
+DistSum= pd.DataFrame(distsum)# Creating a dataframe so I can utilize later and merge if need be
+DistSum.columns=['District_Sum']
+
+
+
+#### 5b. Grouping by State
+
+bystate=schooldfs.loc[:,['State','Award Amount','Nat_Award_Sum',]]
+# Accessing the columns of interest for my new dataframe.
+statesum=bystate.groupby('State')['Award Amount'].agg('sum')
+# grouping by state and aggregating by sum for analysis.
+#Creating a dataframe so i can manipulate column info and then merge with schooldfs and create a new DF for analysis 
+StateSum=pd.DataFrame(statesum)
+StateSum.columns=['State_Sum']
+#renaming column to a more desciptive column head
+StateSum=StateSum.reset_index()
+# Resetting index to merge back into the combined school dataframe.
+#Merging the two state dataframes back into the original and creating a new DF
+School=pd.merge(StateSum, schooldfs, left_on='State',right_on='State')
+
+
+### Examining the type of Model selection by state, and the sum of money per model.
+
+####5c. Sum Per Model
+
+ModelSum=School.loc[:,['Model Selected','Award Amount']]
+#Accessing the columns of interest
+ModelSum=ModelSum.groupby('Model Selected')['Award Amount'].agg('sum')
+#grouping by the model type and aggregating by the sum of the award amount
+ModelSum=pd.DataFrame(ModelSum)
+#Creating a DataFrame of the grouping
+ModelSum.columns=['Nat_Model_Sum']
+#renaming the columns to a more descriptive header
+ModelSum=ModelSum.reset_index()
+#resetting the index so I can Merge dataFrames
+School=pd.merge(School,ModelSum,left_on='Model Selected',right_on='Model Selected')
+#Merging with School Dataframe so I can plot results in later sections
+
+#### 5d. Sum per State:
+
+
+StateModel=School[['State','Model Selected','Award Amount','Nat_Model_Sum']]
+# Selecting the columns of interest
+StateModel=StateModel.groupby(['State','Model Selected'])['Award Amount'].agg('sum')
+#Grouping by the State and the model selected and aggregating the values by mean.
+StateModel=pd.DataFrame(StateModel)
+StateModel.columns=['Sum_Award_Amount']
+#Resetting the columns to a more proper description
+StateModel=StateModel.reset_index(
+Merge2=School.loc[:,['Model Selected','Nat_Model_Sum']]
+StateModel=pd.merge(StateModel,Merge2,left_on='Model Selected',right_on='Model Selected')
+StateModel.drop_duplicates(inplace=True)
+StateModel.columns=['State','Model Selected','Sum_of_Funds_for_Model_per_State','Sum_of_Total_Funds_by_model_in_US']
+StateModel['Funds_per_state_model_by_total_model_type_funds'] = ((StateModel.Sum_of_Funds_for_Model_per_State / StateModel.Sum_of_Total_Funds_by_model_in_US)*100)
+#Calculating the sum of funds for each model by state
+StateModel['Model_type_funds_by_Total_Funds']=((StateModel.Sum_of_Total_Funds_by_model_in_US/(School['Award Amount'].sum()))*100)
+#caluclating the percentages that the sum of funds for each model type is of the total amount of funds.
+StateModel1=StateModel.loc[:,['State','Model Selected','Sum_of_Funds_for_Model_per_State','Sum_of_Total_Funds_by_model_in_US','Model_type_funds_by_Total_Funds','Funds_per_state_model_by_total_model_type_funds']]
+# Seperating the dataframe collecting only the columns of interest for analysis
+StateModel1= StateModel1.sort_values(['State','Model Selected']).set_index(['State','Model Selected'])
+
+##### 5e. Model Counts per state:
+
+StateModelCounts=School[['State','Model Selected']]
+# Creating a dataframe for the columns of interest
+StateModelCounts=StateModelCounts.groupby('State')['Model Selected'].value_counts()
+#Grouping the columns off of state and aggregating the models by the value counts
+StateModelCounts= pd.DataFrame(StateModelCounts)
+# Created a dataframe out of the model counts
+StateModelCounts.columns=['Model_Counts_per_State']
+#Renamed the columns to a proper description.
+
+
+## 6. Plotting the data
+
+
+#### 6a. Plotting Funds and Percentages Allocated to each model Type
+
+StateModel2=StateModel1.reset_index()
+#creating a new DF by resetting the  index of the StateModel dataframe
+TotalFunds=School['Award Amount']
+#Creating a new series and transforming into a dataframe to create a dataframe capable of plotting alongside the 
+#sum of funds per model and the percentage of sums.
+TotalFunds=pd.DataFrame(TotalFunds)
+TotalFunds['XLabel']='Total Funds'
+TotalFunds['Sum of Funds']=TotalFunds['Award Amount'].sum()
+Sums=go.Bar(x = StateModel2['Model Selected'], y =StateModel2.Sum_of_Total_Funds_by_model_in_US )
+Percentages=go.Bar(x = StateModel2['Model Selected'], y = StateModel2.Model_type_funds_by_Total_Funds)
+TotalFunds=go.Bar(x=TotalFunds.XLabel,y=TotalFunds['Sum of Funds'])
+#Creating the individual interactive bar graphs for the subplot.
+fig1 = tools.make_subplots(rows=1, cols=3, subplot_titles=('Model Type Sums', 'Model Type Percentages','Total Funding'))
+#giving a title and positioning each graph in the subplot
+fig1.append_trace(Sums, 1,1)
+fig1.append_trace(Percentages, 1,2)
+fig1.append_trace(TotalFunds, 1,3)
+fig1['layout'].update(height=800, width=900, title='Sum and Percentages of National Funds by Model Type')
+#adjusting the layout of the graph.
+_=py.iplot(fig1, filename='Sum-And-Percentages-of-National-Funds')
+perm = input('Would you like to see an interactive graph for Sum and Percentages for National Funds? Enter Yes or No:  ')
+if perm == 'Yes':
+      webbrowser.open('https://plot.ly/~Zelinska/77/sum-and-percentages-of-national-funds-by-model-type/', new = 2)
+else:
+      print('Okay, moving on')
+
+
+#### 6b. Subplots for Funds allocated by State and the Model Counts by State
+
+StateModelCounts=StateModelCounts.reset_index()
+#restting the index of the Model counts DF for plotting purposes.
+StateModelCounts['Xlabelcount']=StateModelCounts.State.str.cat(StateModelCounts['Model Selected'],sep='-')
+#Creating the x label for the graph
+Allocated=go.Bar(x = StateSum.State, y =StateSum.State_Sum)
+StateModelCount=go.Bar(x = StateModelCounts.Xlabelcount, y =StateModelCounts.Model_Counts_per_State)
+fig2 = tools.make_subplots(rows=2, cols=1, subplot_titles=('Funds Allocated by State', 'Counts of Model Type Chosen by Schools in Each State'))
+fig2.append_trace(Allocated, 1,1)
+fig2.append_trace(StateModelCount, 2,1)
+fig2['layout'].update(height=800, width=900, title= 'Funds Allocated by State and Model Counts by State')
+_=py.iplot(fig2, filename = 'Allocated-Funds-by-State-and-Model-Counts-by-State')
+perm = input('Would you like to see an interactive graph for Sum and Pecentages per transformation model? Enter Yes or No:  ')
+if perm == 'Yes':
+      webbrowser.open('https://plot.ly/~Zelinska/79/funds-allocated-by-state-and-model-counts-by-state/', new = 2)
+else:
+      print('Okay, moving on') 
+
+#### 6c. Funding Sum of model per state
+
+###### Part 1: Type of Models:
+#The plots are likely too large. I will create a new dataframe for each Reform Model.
+
+#TransformationModel
+StateTransFormation=StateModel1.loc[(slice(None),'Transformation'),['Sum_of_Funds_for_Model_per_State','Sum_of_Total_Funds_by_model_in_US','Model_type_funds_by_Total_Funds','Funds_per_state_model_by_total_model_type_funds']]
+#Creating a new DF for each model type so i can plot
+StateTransFormation=StateTransFormation.reset_index()
+#RestartModel
+StateRestart=StateModel1.loc[(slice(None),'Restart'),['Sum_of_Funds_for_Model_per_State','Sum_of_Total_Funds_by_model_in_US','Model_type_funds_by_Total_Funds','Funds_per_state_model_by_total_model_type_funds']]
+StateRestart=StateRestart.reset_index()
+#TurnaroundModel
+StateTurn=StateModel1.loc[(slice(None),'Turnaround'),['Sum_of_Funds_for_Model_per_State','Sum_of_Total_Funds_by_model_in_US','Model_type_funds_by_Total_Funds','Funds_per_state_model_by_total_model_type_funds']]
+StateTurn=StateTurn.reset_index()
+#ClosureModel
+StateClose=StateModel1.loc[(slice(None),'Closure'),['Sum_of_Funds_for_Model_per_State','Sum_of_Total_Funds_by_model_in_US','Model_type_funds_by_Total_Funds','Funds_per_state_model_by_total_model_type_funds']]
+StateClose=StateClose.reset_index()
+
+
+###### Part 2. Subplots for the Models
+
+#Same process as previous subplot
+Transformation=go.Bar(x = StateTransFormation.State, y =StateTransFormation.Sum_of_Funds_for_Model_per_State)
+Turnaround=go.Bar(x = StateTurn.State, y =StateTurn.Sum_of_Funds_for_Model_per_State)
+Restart=go.Bar(x = StateRestart.State, y =StateRestart.Sum_of_Funds_for_Model_per_State)
+Closure=go.Bar(x = StateClose.State, y =StateClose.Sum_of_Funds_for_Model_per_State)
+fig3 = tools.make_subplots(rows=2, cols=2, subplot_titles=('Transformation', 'Turnaround',
+                                                          'Restart', 'Closure'))
+fig3.append_trace(Transformation, 1,1)
+fig3.append_trace(Turnaround, 1,2)
+fig3.append_trace(Restart, 2,1)
+fig3.append_trace(Closure, 2,2)
+fig3['layout'].update(height=800, width=900, title='Sum of Funds by State Per Model Type')
+_=py.iplot(fig3, filename= 'Funds-By-State-Per-Model-Type')
+perm = input('Would you like to see an interactive graph for Sum of Funds per model type for each State? Enter Yes or No:  ')
+if perm == 'Yes':
+      webbrowser.open('https://plot.ly/~Zelinska/81/sum-of-funds-by-state-per-model-type/', new = 2)
+else:
+      print('Okay, moving on!') 
+      
+ 
+ 
+ 
+#### 6d. An interactive geoplot displaying the locations of the Districts, the funds for each District.
+
+###### Part 1. Seperating out the Long and Latitutde to create id tags for each school district.
+
+DistrictSum=DistSum.reset_index() 
+#Resetting the index for ploting purposes
+DistrictSum['State-District']=DistrictSum.State.str.cat(DistrictSum['District Name'],sep='-')
+#creating a new column to concatenate the State with the district name for plotting purposes
+Location=School.loc[:,['School Name','District Name','Award Amount','Location']]
+Location["Latitude"]  = Location.Location.str.split("\n").apply(pd.Series)[2].str.replace("(", "").str.replace(")", "").str.split(",").apply(pd.Series)[0].astype(float)
+Location["Longitude"] = Location.Location.str.split("\n").apply(pd.Series)[2].str.replace("(", "").str.replace(")", "").str.split(",").apply(pd.Series)[1].astype(float)
+#Seperating the longitude and latitude out of the Location column so i can utilize in a map plot.
+DistrictLocation=Location['District Name'] ## Creating District Location so i can create new longitude and lat 
+#columns the rows will match so there will be no missing values
+DistrictLocation=pd.DataFrame(DistrictLocation)
+#Creating a dataframe out of the series
+DistrictLocation.drop_duplicates(subset='District Name',inplace=True)
+#dropping duplicates from the DF
+DistrictLocation=DistrictLocation.sort_values(by='District Name')
+#Sorting by the districe name
+DistrictLocation=DistrictLocation.reset_index()
+#resetting indec
+DistrictLocation.drop(columns='index',inplace=True)
+#dropping the index column 
+LocGroup1=Location.groupby(['District Name'])['Latitude'].mean()
+## I had to group the latitude column to create a location for each district instead of just the schools. 
+#This involved grouping by districts and aggregating by the mean.
+LocGroup2=Location.groupby(['District Name'])['Longitude'].mean()
+#Same process
+LocGroupLat=pd.DataFrame(LocGroup1)
+LocGroupLat=LocGroupLat.reset_index()
+LocGroupLat.columns=[['District_Name','District Lat']]
+#Creating a DF to create a new Lat column
+LocGroupLong=pd.DataFrame(LocGroup2)
+LocGroupLong=LocGroupLong.reset_index()
+LocGroupLong.columns=[['District_Name','District Long']]
+#Same for Long
+DistrictLocation['District_Latitude']= LocGroupLat['District Lat']
+DistrictLocation['District_Longitude']=LocGroupLong['District Long']
+DistrictLocation=pd.merge(DistrictLocation, DistrictSum, left_on='District Name', right_on='District Name')
+#Setting everything up to plot
+
+##### Part 2: Plotting GeoPlot:
+
+# This is a geo plot, it takes the long and lat for each district. Displayed is a map containing the values 
+#for each district, it displays the districts and the associated money with them.
+Fig5=go.Figure(
+    data = [
+        go.Scattergeo(
+            lon = DistrictLocation.District_Longitude,
+            lat = DistrictLocation.District_Latitude,
+            mode = "markers",
+            text =  DistrictLocation['District Name']+ ' - $'+ DistrictLocation.District_Sum.astype('str'),
+            marker = {
+                "color": DistrictLocation.District_Sum,
+                "colorscale": "Hot",
+                "reversescale": True,
+                "colorbar": {
+                    "title": "District Funding"}})],
+    layout = go.Layout(
+        geo = dict(
+            scope = "usa",
+            showland = True,
+            landcolor = "#408040",
+            showocean = True,
+            oceancolor = "#202020"),
+        title='Sum of Funds Allocated by District'))
+_=py.iplot(Fig5,filename='Geoplot-Of-Funds-By-District-and-State')
+perm = input('Would you like to see an interactive geoplot for Sum of Funds per model type for each District? Enter Yes or No:  ')
+if perm == 'Yes':
+      webbrowser.open('https://plot.ly/~Zelinska/85/sum-of-funds-allocated-by-district/', new = 2)
+else:
+      print('Okay, moving on!') 
+
+
+#### 6e. Scatterplot and Table for the money granted to individual schools
+
+SchoolTable=School[['State','District Name','School Name','Award Amount','Model Selected']]
+SchoolTable=SchoolTable.sort_values(by=(['State','District Name','School Name']))
+#Creating a table out of the information to create the scatterplot and table data below.
+Schoolinfo1=SchoolTable.State.str.cat(SchoolTable['District Name'],sep='-')
+SchoolTable['School_Information']=Schoolinfo1.str.cat(SchoolTable['School Name'],sep='-')
+#Creating a scatterplot of the schools and their information
+Fig6 = go.Figure(
+    data = [
+        go.Scatter(x = SchoolTable.School_Information, y = SchoolTable['Award Amount'],
+        mode='markers',
+        )
+    ],  
+    layout = go.Layout(
+        height = 800,
+        width=1000,
+        title='Funds Allocated to Schools by State and District',  
+    )
+) 
+_=py.iplot(Fig6, filename='ScatterOfFundsbySchool')
+#Creating a datatable of the schools and their information
+trace = go.Table(
+    header=dict(values=['State', 'District Name', 'School Name', 'Award Amount','Model Selected'],
+                line = dict(color='#7D7F80'),
+                fill = dict(color='#a1c3d1'),
+                align = ['left'] * 5),
+    cells=dict(values=[SchoolTable['State'],
+                       SchoolTable['District Name'],
+                       SchoolTable['School Name'],
+                       SchoolTable['Award Amount'],
+                      SchoolTable['Model Selected']],
+               line = dict(color='#7D7F80'),
+               fill = dict(color='#EDFAFF'),
+               align = ['left'] * 5))
+layout = dict(width=1000, height=800)
+data = [trace]
+fig7 = dict(data=data, layout=layout)
+_=py.iplot(fig7, filename = 'District-And-School-Table')
+perm = input('Would you like to see an interactive table for all of the information per school? Enter Yes or No:  ')
+if perm == 'Yes':
+      webbrowser.open('https://plot.ly/~Zelinska/89/', new = 2)
+else:
+      print('Okay, moving on!') 
+
+
+
+
+
+
+
+
+
+
+
+
